@@ -17,8 +17,8 @@ else:
     # Configure API key
     genai.configure(api_key=gemini_api_key)
     
-    # Model specification
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    # Model specification (models/ を付与)
+    model = genai.GenerativeModel("models/gemini-1.5-flash")
 
     # Session state initialization
     if "messages" not in st.session_state:
