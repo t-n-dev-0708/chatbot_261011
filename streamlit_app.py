@@ -18,17 +18,14 @@ with st.sidebar:
     st.markdown("[🔑 APIキーの取得 (Google AI Studio)](https://aistudio.google.com/)")
     st.divider()
     
-    # リセット時にチャットセッションも消去する
     if st.button("🗑️ 会話をリセット", use_container_width=True):
         st.session_state.messages = []
-        if "chat_session" in st.session_state:
-            del st.session_state.chat_session
         st.rerun()
 
 st.title("🤖 AI アシスタント")
 st.caption("文脈を理解する対話型チャットボットです。")
 
-# 画面表示用の履歴
+# 画面表示およびAPI送信用の会話履歴
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -41,35 +38,37 @@ for message in st.session_state.messages:
 if not gemini_api_key:
     st.info("👈 サイドバーに API キーを入力してください。")
 else:
-    client = genai.Client(api_key=gemini_api_key.strip())
-
-    # --- 文脈保持用（Chat Session）の初期化 ---
-    if "chat_session" not in st.session_state:
-        # Streamlit再起動時に画面履歴(messages)からAPI用の履歴(History)を復元する
-        api_history = []
-        for msg in st.session_state.messages:
-            role = "user" if msg["role"] == "user" else "model"
-            api_history.append(types.Content(role=role, parts=[types.Part.from_text(msg["content"])]))
-        
-        # 履歴を持った状態でセッションを作成
-        st.session_state.chat_session = client.chats.create(
-            model="gemini-3.8-flash",
-            config=types.GenerateContentConfig(
-                temperature=0.7,
-            ),
-            history=api_history
-        )
-
     if prompt := st.chat_input("メッセージを入力してください..."):
-        # 画面にユーザーの発言を追加
+        # ユーザーの発言を画面と履歴に追加
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar="👤"):
             st.markdown(prompt)
 
-        # AIの返答処理（send_message_streamを使うことで文脈が維持される）
+        # AIの返答処理
         with st.chat_message("assistant", avatar="🤖"):
             try:
-                response_stream = st.session_state.chat_session.send_message_stream(prompt)
+                # 毎リクエスト時に Client を新規作成（クローズエラーを防ぐ）
+                client = genai.Client(api_key=gemini_api_key.strip())
+
+                # これまでの全履歴（今回送信するプロンプトを除く）を Gemini 用の形式に変換
+                history = []
+                for msg in st.session_state.messages[:-1]:
+                    role = "user" if msg["role"] == "user" else "model"
+                    history.append(
+                        types.Content(
+                            role=role,
+                            parts=[types.Part.from_text(text=msg["content"])]
+                        )
+                    )
+
+                # 過去履歴を持ったチャットセッションをその場で作成
+                chat = client.chats.create(
+                    model="gemini-3.8-flash",
+                    history=history,
+                )
+
+                # メッセージ送信（文脈を維持したストリーミング返答）
+                response_stream = chat.send_message_stream(prompt)
                 
                 def stream_generator():
                     for chunk in response_stream:
@@ -77,7 +76,7 @@ else:
 
                 full_response = st.write_stream(stream_generator)
                 
-                # 画面用の履歴に保存
+                # AIの返答を履歴に保存
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
 
             except Exception as e:
