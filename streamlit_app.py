@@ -36,9 +36,9 @@ else:
             st.markdown(prompt)
 
         try:
-            # 新SDKでのモデル呼び出し
+            # 2026年最新モデル gemini-3.8-flash に変更
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.8-flash",
                 contents=prompt,
             )
             msg_text = response.text
