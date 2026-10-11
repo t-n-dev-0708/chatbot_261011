@@ -10,24 +10,31 @@ st.set_page_config(
     layout="wide",
 )
 
-# Secrets から API キーを取得（未設定時は空文字）
 secrets_api_key = st.secrets.get("GEMINI_API_KEY", "")
 
 with st.sidebar:
     st.header("⚙️ 設定")
     
-    # Secrets に登録されている場合は自動読み込み
     if secrets_api_key:
-        st.success("🔑 API キー（Secrets）を自動読み込みしました")
+        st.success("🔑 API キー（Secrets）自動読み込み完了")
         gemini_api_key = secrets_api_key
     else:
         gemini_api_key = st.text_input(
             "Gemini API キー",
             type="password",
             placeholder="AIzaSy...",
-            help="Streamlit Cloud の Secrets に GEMINI_API_KEY を設定すると手動入力が不要になります",
         )
         st.markdown("[🔑 APIキーの取得 (Google AI Studio)](https://aistudio.google.com/)")
+    
+    st.divider()
+
+    # 手動モデル選択肢
+    selected_model = st.selectbox(
+        "優先モデル",
+        ["auto (自動フォールバック)", "gemini-1.5-flash", "gemini-2.5-flash", "gemini-3.8-flash"],
+        index=0,
+        help="autoの場合は gemini-3.8-flash -> 1.5-flash -> 2.5-flash の順で自動切替します"
+    )
     
     st.divider()
     
@@ -37,16 +44,15 @@ with st.sidebar:
         st.rerun()
 
 st.title("🤖 AI アシスタント")
-st.caption("チャット入力欄からテキストと一緒に画像を直接添付できます。")
+st.caption("テキストおよび画像の添付に対応したチャットボットです。")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# 再送信フラグの初期化
 if "retry_trigger" not in st.session_state:
     st.session_state.retry_trigger = False
 
-# 過去の会話を描画
+# 過去ログ描画
 for message in st.session_state.messages:
     avatar = "👤" if message["role"] == "user" else "🤖"
     with st.chat_message(message["role"], avatar=avatar):
@@ -55,8 +61,7 @@ for message in st.session_state.messages:
         if message.get("content"):
             st.markdown(message["content"])
 
-# AIに応答を生成させる共通関数
-def process_ai_response(api_key):
+def process_ai_response(api_key, model_option):
     last_user_msg = st.session_state.messages[-1]
     user_text = last_user_msg.get("content", "")
     img_obj = last_user_msg.get("image", None)
@@ -65,7 +70,6 @@ def process_ai_response(api_key):
         try:
             client = genai.Client(api_key=api_key.strip())
 
-            # 過去の会話履歴（直前の発言を除くテキスト）を構築
             history = []
             for msg in st.session_state.messages[:-1]:
                 role = "user" if msg["role"] == "user" else "model"
@@ -86,7 +90,12 @@ def process_ai_response(api_key):
             if not contents:
                 contents = ["この画像について説明してください。"]
 
-            models_to_try = ["gemini-3.8-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+            # モデル選択ロジック（autoの場合は3.8->1.5->2.5の順で試し、503や429が出たら切り替え）
+            if model_option == "auto (自動フォールバック)":
+                models_to_try = ["gemini-3.8-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+            else:
+                models_to_try = [model_option, "gemini-1.5-flash", "gemini-2.5-flash"]
+
             response_stream = None
             last_error = None
 
@@ -100,7 +109,9 @@ def process_ai_response(api_key):
                     break
                 except Exception as e:
                     last_error = e
-                    if "503" in str(e) or "UNAVAILABLE" in str(e):
+                    err_str = str(e)
+                    # 503 (混雑) または 429 / RESOURCE_EXHAUSTED (利用枠上限) の場合は別モデルへ回避
+                    if any(k in err_str for k in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "Quota exceeded"]):
                         time.sleep(1)
                         continue
                     raise e
@@ -118,7 +129,6 @@ def process_ai_response(api_key):
 
         except Exception as e:
             st.error(f"通信エラーが発生しました: {e}")
-            # 再送信ボタンの配置
             if st.button("🔄 もう一度送信する", use_container_width=True):
                 st.session_state.retry_trigger = True
                 st.rerun()
@@ -126,7 +136,6 @@ def process_ai_response(api_key):
 if not gemini_api_key:
     st.info("👈 サイドバーに API キーを入力（または Secrets に登録）してください。")
 else:
-    # 1. 新規メッセージ入力時
     if prompt := st.chat_input(
         "メッセージを入力（＋ボタンで画像を添付可能）...",
         accept_file=True,
@@ -151,8 +160,7 @@ else:
             if user_text:
                 st.markdown(user_text)
 
-        process_ai_response(gemini_api_key)
+        process_ai_response(gemini_api_key, selected_model)
 
-    # 2. 「もう一度送信する」ボタンが押されたときのリトライ実行
     elif st.session_state.retry_trigger and st.session_state.messages:
-        process_ai_response(gemini_api_key)
+        process_ai_response(gemini_api_key, selected_model)
