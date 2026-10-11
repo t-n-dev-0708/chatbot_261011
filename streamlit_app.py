@@ -16,7 +16,8 @@ else:
 
     # Configure Gemini API client.
     genai.configure(api_key=gemini_api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    # モデル名を最新の安定版指定に変更
+    model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
     # Create a session state variable to store the chat messages.
     if "messages" not in st.session_state:
