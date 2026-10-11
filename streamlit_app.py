@@ -56,24 +56,29 @@ else:
                         )
                     )
 
-                chat = client.chats.create(
-                    model="gemini-3.8-flash",
-                    history=history,
-                )
-
-                # 503エラー対策：最大3回自動リトライ
+                # 混雑時に試すモデルの候補リスト（順次フォールバック）
+                models_to_try = ["gemini-3.8-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
                 response_stream = None
-                max_retries = 3
-                for attempt in range(max_retries):
+                last_error = None
+
+                for model_name in models_to_try:
                     try:
+                        chat = client.chats.create(
+                            model=model_name,
+                            history=history,
+                        )
                         response_stream = chat.send_message_stream(prompt)
-                        break
+                        break  # 成功したらループを抜け出す
                     except Exception as e:
-                        if "503" in str(e) and attempt < max_retries - 1:
-                            time.sleep(2)  # 2秒待って再試行
+                        last_error = e
+                        if "503" in str(e) or "UNAVAILABLE" in str(e):
+                            time.sleep(1)  # 1秒待って次のモデルを試す
                             continue
                         raise e
-                
+
+                if response_stream is None:
+                    raise last_error
+
                 def stream_generator():
                     for chunk in response_stream:
                         yield chunk.text
@@ -82,4 +87,4 @@ else:
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
 
             except Exception as e:
-                st.error(f"エラーが発生しました（少し時間を置いて再度お試しください）: {e}")
+                st.error("現在GoogleのAPIサーバーが世界的に大変混雑しています。10〜20秒ほど置いて再度メッセージをお送りください。")
